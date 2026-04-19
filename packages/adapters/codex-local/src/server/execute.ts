@@ -477,10 +477,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const compressionConfig = parseObject(config.promptCompression);
   const compressionEnabled = asBoolean(compressionConfig.enabled, false);
+  const cavemanConfig = parseObject(compressionConfig.caveman);
+  const cavemanEnabled = asBoolean(cavemanConfig.enabled, false);
+  const cavemanIntensity = asString(cavemanConfig.intensity, "full");
+
+  const cavemanInstruction = cavemanEnabled
+    ? `[CAVEMAN MODE: ${cavemanIntensity}] Respond in extremely terse, high-density facts. Avoid conversational filler. No preamble. No apologies. Use symbols/abbreviations where possible. Priority: token efficiency.\n\n`
+    : "";
 
   let prompt: string;
   if (compressionEnabled) {
     prompt = joinPromptSections([
+      cavemanInstruction,
       compressInstructions(promptInstructionsPrefix),
       compressBootstrapPrompt(renderedBootstrapPrompt),
       compressWakeContext(context.paperclipWake),
@@ -490,6 +498,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ]);
   } else {
     prompt = joinPromptSections([
+      cavemanInstruction,
       promptInstructionsPrefix,
       renderedBootstrapPrompt,
       wakePrompt,
