@@ -69,6 +69,14 @@ import {
   agentConfigurationDoc as piAgentConfigurationDoc,
 } from "@paperclipai/adapter-pi-local";
 import {
+  execute as llamacppExecute,
+  testEnvironment as llamacppTestEnvironment,
+} from "@paperclipai/adapter-llamacpp-local/server";
+import {
+  agentConfigurationDoc as llamacppAgentConfigurationDoc,
+  models as llamacppModels,
+} from "@paperclipai/adapter-llamacpp-local";
+import {
   execute as hermesExecute,
   testEnvironment as hermesTestEnvironment,
   sessionCodec as hermesSessionCodec,
@@ -200,6 +208,18 @@ const piLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: piAgentConfigurationDoc,
 };
 
+const llamacppLocalAdapter: ServerAdapterModule = {
+  type: "llamacpp_local",
+  execute: llamacppExecute,
+  testEnvironment: llamacppTestEnvironment,
+  models: llamacppModels,
+  supportsLocalAgentJwt: true,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
+  requiresMaterializedRuntimeSkills: false,
+  agentConfigurationDoc: llamacppAgentConfigurationDoc,
+};
+
 const hermesLocalAdapter: ServerAdapterModule = {
   type: "hermes_local",
   execute: hermesExecute,
@@ -235,6 +255,7 @@ function registerBuiltInAdapters() {
     piLocalAdapter,
     cursorLocalAdapter,
     geminiLocalAdapter,
+    llamacppLocalAdapter,
     openclawGatewayAdapter,
     hermesLocalAdapter,
     processAdapter,

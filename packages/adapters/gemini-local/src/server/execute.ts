@@ -26,6 +26,17 @@ import {
   stringifyPaperclipWakePayload,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
+import {
+  compressInstructions,
+  compressWakeContext,
+  compressBootstrapPrompt,
+  compressEnvironmentNotes,
+  compressApiNotes,
+} from "@paperclipai/adapter-utils/compression";
+import {
+  buildToolSchemas,
+  buildGeminiToolSchema,
+} from "@paperclipai/adapter-utils/tool-schema";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 import {
   describeGeminiFailure,
@@ -309,15 +320,41 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const paperclipEnvNote = renderPaperclipEnvNote(env);
   const apiAccessNote = renderApiAccessNote(env);
-  const prompt = joinPromptSections([
-    instructionsPrefix,
-    renderedBootstrapPrompt,
-    wakePrompt,
-    sessionHandoffNote,
-    paperclipEnvNote,
-    apiAccessNote,
-    renderedPrompt,
-  ]);
+  const compressionConfig = parseObject(config.promptCompression);
+  const compressionEnabled = asBoolean(compressionConfig.enabled, false);
+  const cavemanConfig = parseObject(compressionConfig.caveman);
+  const cavemanEnabled = asBoolean(cavemanConfig.enabled, false);
+  const cavemanIntensity = asString(cavemanConfig.intensity, "full");
+
+  const cavemanInstruction = cavemanEnabled
+    ? `[CAVEMAN MODE: ${cavemanIntensity}] Respond in extremely terse, high-density facts. Avoid conversational filler. No preamble. No apologies. Use symbols/abbreviations where possible. Priority: token efficiency.\n\n`
+    : "";
+
+  let prompt: string;
+  if (compressionEnabled) {
+    const compressedSections = [
+      cavemanInstruction,
+      compressInstructions(instructionsPrefix),
+      compressBootstrapPrompt(renderedBootstrapPrompt),
+      compressWakeContext(context.paperclipWake),
+      sessionHandoffNote,
+      compressEnvironmentNotes(env),
+      "", // Remove apiAccessNote in compression mode
+      renderedPrompt,
+    ];
+    prompt = joinPromptSections(compressedSections);
+  } else {
+    prompt = joinPromptSections([
+      cavemanInstruction,
+      instructionsPrefix,
+      renderedBootstrapPrompt,
+      wakePrompt,
+      sessionHandoffNote,
+      paperclipEnvNote,
+      apiAccessNote,
+      renderedPrompt,
+    ]);
+  }
   const promptMetrics = {
     promptChars: prompt.length,
     instructionsChars: instructionsPrefix.length,
@@ -338,6 +375,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     } else {
       args.push("--sandbox=none");
     }
+
+    // NEW: Add explicit tool schema for Gemini 2.5
+    const toolsConfig = parseObject(config.tools);
+    const toolList = Array.isArray(toolsConfig.list) ? toolsConfig.list : [];
+    if (config.tools !== false && toolList.length > 0) {
+      const toolSchemas = buildToolSchemas(toolList);
+      const geminiTools = buildGeminiToolSchema(toolSchemas);
+
+      if (toolSchemas.length > 0) {
+        args.push("--tools", JSON.stringify(geminiTools));
+        args.push("--enable-tool-calling");
+      }
+    }
+
     if (extraArgs.length > 0) args.push(...extraArgs);
     args.push("--prompt", prompt);
     return args;
