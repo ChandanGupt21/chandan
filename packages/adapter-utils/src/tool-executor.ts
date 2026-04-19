@@ -1,6 +1,4 @@
-// ---------------------------------------------------------------------------
-// Tool Executor — execute tool calls from parsed LLM responses.
-// ---------------------------------------------------------------------------
+import { truncateToolOutput } from "./compression.js";
 
 export interface ToolExecution {
   toolName: string;
@@ -140,7 +138,7 @@ export function formatToolResults(executions: ToolExecution[]): string {
         typeof exec.result === "string"
           ? exec.result
           : JSON.stringify(exec.result, null, 2);
-      return `Tool ${exec.toolName}: ${resultStr}`;
+      return `Tool ${exec.toolName}: ${truncateToolOutput(resultStr, exec.toolName)}`;
     })
     .join("\n\n");
 }

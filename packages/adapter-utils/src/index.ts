@@ -69,6 +69,7 @@ export {
   compressBootstrapPrompt,
   compressEnvironmentNotes,
   compressApiNotes,
+  truncateToolOutput,
 } from "./compression.js";
 export type {
   CavemanIntensity,

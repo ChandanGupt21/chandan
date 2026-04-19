@@ -155,7 +155,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   );
   const command = asString(config.command, "gemini");
   const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
-  const sandbox = asBoolean(config.sandbox, false);
 
   const workspaceContext = parseObject(context.paperclipWorkspace);
   const workspaceCwd = asString(workspaceContext.cwd, "");
@@ -229,7 +228,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     env.PAPERCLIP_API_KEY = authToken;
   }
   const effectiveEnv = Object.fromEntries(
-    Object.entries({ ...process.env, ...env }).filter(
+    Object.entries({
+      ...process.env,
+      ...env,
+      PAPERCLIP_API_KEY: env.PAPERCLIP_API_KEY || process.env.PAPERCLIP_API_KEY || "",
+      PAPERCLIP_API_URL: env.PAPERCLIP_API_URL || process.env.PAPERCLIP_API_URL || "http://localhost:3100",
+    }).filter(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
@@ -284,7 +288,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
   }
   const commandNotes = (() => {
-    const notes: string[] = ["Prompt is passed to Gemini via --prompt for non-interactive execution."];
+    const notes: string[] = ["Prompt is passed to Gemini via stdin for non-interactive execution."];
     notes.push("Added --approval-mode yolo for unattended execution.");
     if (!instructionsFilePath) return notes;
     if (instructionsPrefix.length > 0) {
@@ -346,7 +350,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   } else {
     prompt = joinPromptSections([
       cavemanInstruction,
-      instructionsPrefix,
+      sessionId ? null : instructionsPrefix,
       renderedBootstrapPrompt,
       wakePrompt,
       sessionHandoffNote,
@@ -365,37 +369,73 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     heartbeatPromptChars: renderedPrompt.length,
   };
 
-  const buildArgs = (resumeSessionId: string | null) => {
-    const args = ["--output-format", "stream-json"];
-    if (resumeSessionId) args.push("--resume", resumeSessionId);
+  const buildGeminiArgs = (resumeSessionId: string | null) => {
+    const args = [
+      "--output-format",
+      "stream-json",
+      "--approval-mode",
+      "yolo",
+      "--sandbox=none",
+    ];
     if (model && model !== DEFAULT_GEMINI_LOCAL_MODEL) args.push("--model", model);
-    args.push("--approval-mode", "yolo");
-    if (sandbox) {
-      args.push("--sandbox");
-    } else {
-      args.push("--sandbox=none");
-    }
 
     // NEW: Add explicit tool schema for Gemini 2.5
     const toolsConfig = parseObject(config.tools);
     const toolList = Array.isArray(toolsConfig.list) ? toolsConfig.list : [];
     if (config.tools !== false && toolList.length > 0) {
-      const toolSchemas = buildToolSchemas(toolList);
-      const geminiTools = buildGeminiToolSchema(toolSchemas);
-
-      if (toolSchemas.length > 0) {
-        args.push("--tools", JSON.stringify(geminiTools));
-        args.push("--enable-tool-calling");
-      }
+      const toolSchemaArgs = buildToolSchemas(context.paperclipSkills, {
+      adapterType: "gemini",
+      model,
+    });
+    if (toolSchemaArgs.length > 0) {
+      args.push(...toolSchemaArgs);
+    }
     }
 
+    if (resumeSessionId) args.push("--resume", resumeSessionId);
     if (extraArgs.length > 0) args.push(...extraArgs);
-    args.push("--prompt", prompt);
     return args;
   };
 
+  function stripNoise(raw: string): string {
+    const idx = raw.indexOf("{");
+    if (idx === -1) return raw;
+    return raw.slice(idx);
+  }
+
+  function parseGeminiOutput(stdout: string): ReturnType<typeof parseGeminiJsonl> {
+    // Primary: try JSONL (v0.35 and earlier)
+    try {
+      const lines = stdout.split("\n").filter((l) => l.trim().startsWith("{"));
+      if (lines.length > 0) {
+        return parseGeminiJsonl(stdout);
+      }
+    } catch (_) {}
+
+    // Fallback: plain JSON (v0.36+)
+    try {
+      const cleaned = stripNoise(stdout);
+      const obj = JSON.parse(cleaned);
+      const rawResponse = obj?.raw?.response ?? obj?.response ?? "";
+      return {
+        summary: rawResponse,
+        errorMessage: null,
+        sessionId: obj?.sessionId ?? null,
+        usage: {
+          inputTokens: asNumber(obj?.usage?.inputTokens, 0),
+          outputTokens: asNumber(obj?.usage?.outputTokens, 0),
+          cachedInputTokens: 0,
+        },
+        costUsd: 0,
+        resultEvent: obj,
+      };
+    } catch (_) {}
+
+    throw new Error("Could not parse Gemini CLI output in any known format");
+  }
+
   const runAttempt = async (resumeSessionId: string | null) => {
-    const args = buildArgs(resumeSessionId);
+    const args = buildGeminiArgs(resumeSessionId);
     if (onMeta) {
       await onMeta({
         adapterType: "gemini_local",
@@ -414,7 +454,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
     const proc = await runChildProcess(runId, command, args, {
       cwd,
-      env,
+      env: effectiveEnv,
+      stdin: prompt,
       timeoutSec,
       graceSec,
       onSpawn,
@@ -422,7 +463,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     });
     return {
       proc,
-      parsed: parseGeminiJsonl(proc.stdout),
+      parsed: parseGeminiOutput(proc.stdout),
     };
   };
 
