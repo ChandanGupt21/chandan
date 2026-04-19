@@ -33,6 +33,11 @@ Operational fields:
 - timeoutSec (number, optional): run timeout in seconds
 - graceSec (number, optional): SIGTERM grace period in seconds
 
+Compression fields:
+- promptCompression.enabled (boolean, optional): enable prompt compression. Defaults to false.
+- promptCompression.caveman.enabled (boolean, optional): enable caveman output formatting. Defaults to false.
+- promptCompression.caveman.intensity (string, optional): "lite" | "full" | "ultra". Defaults to "full".
+
 Notes:
 - When Paperclip realizes a workspace/runtime for a run, it injects PAPERCLIP_WORKSPACE_* and PAPERCLIP_RUNTIME_* env vars for agent-side tooling.
 `;
