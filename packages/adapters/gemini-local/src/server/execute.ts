@@ -26,6 +26,17 @@ import {
   stringifyPaperclipWakePayload,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
+import {
+  compressInstructions,
+  compressWakeContext,
+  compressBootstrapPrompt,
+  compressEnvironmentNotes,
+  compressApiNotes,
+} from "@paperclipai/adapter-utils/compression";
+import {
+  buildToolSchemas,
+  buildGeminiToolSchema,
+} from "@paperclipai/adapter-utils/tool-schema";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "../index.js";
 import {
   describeGeminiFailure,
@@ -309,15 +320,32 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
   const paperclipEnvNote = renderPaperclipEnvNote(env);
   const apiAccessNote = renderApiAccessNote(env);
-  const prompt = joinPromptSections([
-    instructionsPrefix,
-    renderedBootstrapPrompt,
-    wakePrompt,
-    sessionHandoffNote,
-    paperclipEnvNote,
-    apiAccessNote,
-    renderedPrompt,
-  ]);
+  const compressionConfig = parseObject(config.promptCompression);
+  const compressionEnabled = asBoolean(compressionConfig.enabled, false);
+
+  let prompt: string;
+  if (compressionEnabled) {
+    const compressedSections = [
+      compressInstructions(instructionsPrefix),
+      compressBootstrapPrompt(renderedBootstrapPrompt),
+      compressWakeContext(context.paperclipWake),
+      sessionHandoffNote,
+      compressEnvironmentNotes(env),
+      "", // Remove apiAccessNote in compression mode
+      renderedPrompt,
+    ];
+    prompt = joinPromptSections(compressedSections);
+  } else {
+    prompt = joinPromptSections([
+      instructionsPrefix,
+      renderedBootstrapPrompt,
+      wakePrompt,
+      sessionHandoffNote,
+      paperclipEnvNote,
+      apiAccessNote,
+      renderedPrompt,
+    ]);
+  }
   const promptMetrics = {
     promptChars: prompt.length,
     instructionsChars: instructionsPrefix.length,
@@ -338,6 +366,20 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     } else {
       args.push("--sandbox=none");
     }
+
+    // NEW: Add explicit tool schema for Gemini 2.5
+    const toolsConfig = parseObject(config.tools);
+    const toolList = Array.isArray(toolsConfig.list) ? toolsConfig.list : [];
+    if (config.tools !== false && toolList.length > 0) {
+      const toolSchemas = buildToolSchemas(toolList);
+      const geminiTools = buildGeminiToolSchema(toolSchemas);
+
+      if (toolSchemas.length > 0) {
+        args.push("--tools", JSON.stringify(geminiTools));
+        args.push("--enable-tool-calling");
+      }
+    }
+
     if (extraArgs.length > 0) args.push(...extraArgs);
     args.push("--prompt", prompt);
     return args;

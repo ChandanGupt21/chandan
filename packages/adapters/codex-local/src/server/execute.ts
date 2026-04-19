@@ -5,6 +5,7 @@ import { inferOpenAiCompatibleBiller, type AdapterExecutionContext, type Adapter
 import {
   asString,
   asNumber,
+  asBoolean,
   parseObject,
   buildPaperclipEnv,
   buildInvocationEnvForLogs,
@@ -21,6 +22,12 @@ import {
   joinPromptSections,
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
+import {
+  compressInstructions,
+  compressWakeContext,
+  compressBootstrapPrompt,
+  compressEnvironmentNotes,
+} from "@paperclipai/adapter-utils/compression";
 import { parseCodexJsonl, isCodexUnknownSessionError } from "./parse.js";
 import { pathExists, prepareManagedCodexHome, resolveManagedCodexHomeDir, resolveSharedCodexHomeDir } from "./codex-home.js";
 import { resolveCodexDesiredSkillNames } from "./skills.js";
@@ -468,15 +475,31 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   })();
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
-  const prompt = joinPromptSections([
-    promptInstructionsPrefix,
-    renderedBootstrapPrompt,
-    wakePrompt,
-    sessionHandoffNote,
-    renderedPrompt,
-  ]);
+  const compressionConfig = parseObject(config.promptCompression);
+  const compressionEnabled = asBoolean(compressionConfig.enabled, false);
+
+  let prompt: string;
+  if (compressionEnabled) {
+    prompt = joinPromptSections([
+      compressInstructions(promptInstructionsPrefix),
+      compressBootstrapPrompt(renderedBootstrapPrompt),
+      compressWakeContext(context.paperclipWake),
+      sessionHandoffNote,
+      compressEnvironmentNotes(env),
+      renderedPrompt,
+    ]);
+  } else {
+    prompt = joinPromptSections([
+      promptInstructionsPrefix,
+      renderedBootstrapPrompt,
+      wakePrompt,
+      sessionHandoffNote,
+      renderedPrompt,
+    ]);
+  }
   const promptMetrics = {
     promptChars: prompt.length,
+    compressionEnabled: compressionEnabled ? 1 : 0,
     instructionsChars,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     wakePromptChars: wakePrompt.length,

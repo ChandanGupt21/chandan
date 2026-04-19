@@ -84,6 +84,7 @@ export function parseGeminiJsonl(stdout: string) {
     cachedInputTokens: 0,
     outputTokens: 0,
   };
+  const toolCalls: any[] = [];
 
   for (const rawLine of stdout.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -103,7 +104,8 @@ export function parseGeminiJsonl(stdout: string) {
       const content = Array.isArray(messageObj.content) ? messageObj.content : [];
       for (const partRaw of content) {
         const part = parseObject(partRaw);
-        if (asString(part.type, "").trim() === "question") {
+        const partType = asString(part.type, "").trim();
+        if (partType === "question") {
           question = {
             prompt: asString(part.prompt, "").trim(),
             choices: (Array.isArray(part.choices) ? part.choices : []).map((choiceRaw) => {
@@ -116,6 +118,19 @@ export function parseGeminiJsonl(stdout: string) {
             }),
           };
           break; // only one question per message
+        }
+
+        // NEW: parse tool calls
+        if (partType === "function_call" || partType === "tool_use" || part.functionCall) {
+          const fn = parseObject(part.functionCall || part);
+          const name = asString(fn.name, "").trim();
+          if (name) {
+            toolCalls.push({
+              id: asString(fn.id, `gtc_${toolCalls.length}`),
+              name,
+              input: parseObject(fn.args || fn.input || {}),
+            });
+          }
         }
       }
       continue;
@@ -170,6 +185,7 @@ export function parseGeminiJsonl(stdout: string) {
   return {
     sessionId,
     summary: messages.join("\n\n").trim(),
+    toolCalls,
     usage,
     costUsd,
     errorMessage,

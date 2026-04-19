@@ -24,6 +24,12 @@ import {
   runChildProcess,
 } from "@paperclipai/adapter-utils/server-utils";
 import {
+  compressInstructions,
+  compressWakeContext,
+  compressBootstrapPrompt,
+  compressEnvironmentNotes,
+} from "@paperclipai/adapter-utils/compression";
+import {
   parseClaudeStreamJson,
   describeClaudeFailure,
   detectClaudeLoginRequired,
@@ -358,10 +364,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       );
     }
   }
+  const compressionConfig = parseObject(config.promptCompression);
+  const compressionEnabled = asBoolean(compressionConfig.enabled, false);
+
   const promptBundle = await prepareClaudePromptBundle({
     companyId: agent.companyId,
     skills: claudeSkillEntries.filter((entry) => desiredSkillNames.has(entry.key)),
-    instructionsContents: combinedInstructionsContents,
+    instructionsContents: (compressionEnabled && combinedInstructionsContents) 
+      ? compressInstructions(combinedInstructionsContents) 
+      : combinedInstructionsContents,
     onLog,
   });
   const effectiveInstructionsFilePath = promptBundle.instructionsFilePath ?? undefined;
@@ -411,14 +422,27 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
   const renderedPrompt = shouldUseResumeDeltaPrompt ? "" : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
-  const prompt = joinPromptSections([
-    renderedBootstrapPrompt,
-    wakePrompt,
-    sessionHandoffNote,
-    renderedPrompt,
-  ]);
+
+  let prompt: string;
+  if (compressionEnabled) {
+    prompt = joinPromptSections([
+      compressBootstrapPrompt(renderedBootstrapPrompt),
+      compressWakeContext(context.paperclipWake),
+      sessionHandoffNote,
+      compressEnvironmentNotes(env),
+      renderedPrompt,
+    ]);
+  } else {
+    prompt = joinPromptSections([
+      renderedBootstrapPrompt,
+      wakePrompt,
+      sessionHandoffNote,
+      renderedPrompt,
+    ]);
+  }
   const promptMetrics = {
     promptChars: prompt.length,
+    compressionEnabled: compressionEnabled ? 1 : 0,
     bootstrapPromptChars: renderedBootstrapPrompt.length,
     wakePromptChars: wakePrompt.length,
     sessionHandoffChars: sessionHandoffNote.length,
