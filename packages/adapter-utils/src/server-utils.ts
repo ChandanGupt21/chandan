@@ -487,13 +487,9 @@ export function renderPaperclipWakePrompt(
     const authorLabel = comment.authorId
       ? `${comment.authorType ?? "unknown"} ${comment.authorId}`
       : comment.authorType ?? "unknown";
-    lines.push(
-      `${index + 1}. comment ${comment.id ?? "unknown"} at ${comment.createdAt ?? "unknown"} by ${authorLabel}`,
-      comment.body,
-    );
-    if (comment.bodyTruncated) {
-      lines.push("[comment body truncated]");
-    }
+    const bodyExcerpt =
+      comment.body.length > 150 ? `${comment.body.slice(0, 150)}...` : comment.body;
+    lines.push(`${index + 1}. comment ${comment.id ?? "unknown"} by ${authorLabel}`, bodyExcerpt);
     lines.push("");
   }
 
