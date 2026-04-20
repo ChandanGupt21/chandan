@@ -42,6 +42,43 @@ function summarizeProbeDetail(stdout: string, stderr: string, parsedError: strin
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+function stripNoise(raw: string): string {
+  const idx = raw.indexOf("{");
+  if (idx === -1) return raw;
+  return raw.slice(idx);
+}
+
+function parseGeminiOutput(stdout: string): ReturnType<typeof parseGeminiJsonl> {
+  // Primary: try JSONL (v0.35 and earlier)
+  try {
+    const lines = stdout.split("\n").filter((l) => l.trim().startsWith("{"));
+    if (lines.length > 0) {
+      return parseGeminiJsonl(stdout);
+    }
+  } catch (_) {}
+
+  // Fallback: plain JSON (v0.36+)
+  try {
+    const cleaned = stripNoise(stdout);
+    const obj = JSON.parse(cleaned);
+    const rawResponse = obj?.raw?.response ?? obj?.response ?? "";
+    return {
+      summary: rawResponse,
+      errorMessage: null,
+      sessionId: obj?.sessionId ?? null,
+      usage: {
+        inputTokens: asNumber(obj?.usage?.inputTokens, 0),
+        outputTokens: asNumber(obj?.usage?.outputTokens, 0),
+        cachedInputTokens: 0,
+      },
+      costUsd: 0,
+      resultEvent: obj,
+    };
+  } catch (_) {}
+
+  throw new Error("Could not parse Gemini CLI output in any known format");
+}
+
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
 ): Promise<AdapterEnvironmentTestResult> {
@@ -135,14 +172,15 @@ export async function testEnvironment(
       const model = asString(config.model, DEFAULT_GEMINI_LOCAL_MODEL).trim();
       const approvalMode = asString(config.approvalMode, asBoolean(config.yolo, false) ? "yolo" : "default");
       const sandbox = asBoolean(config.sandbox, false);
-      const helloProbeTimeoutSec = Math.max(1, asNumber(config.helloProbeTimeoutSec, 10));
+      const helloProbeTimeoutSec = Math.max(1, asNumber(config.helloProbeTimeoutSec, 30));
       const extraArgs = (() => {
         const fromExtraArgs = asStringArray(config.extraArgs);
         if (fromExtraArgs.length > 0) return fromExtraArgs;
         return asStringArray(config.args);
       })();
 
-      const args = ["--output-format", "stream-json", "--prompt", "Respond with hello."];
+      const args = ["--output-format", "stream-json"];
+      const prompt = "Respond with hello.";
       if (model && model !== DEFAULT_GEMINI_LOCAL_MODEL) args.push("--model", model);
       if (approvalMode !== "default") args.push("--approval-mode", approvalMode);
       if (sandbox) {
@@ -159,12 +197,13 @@ export async function testEnvironment(
         {
           cwd,
           env,
+          stdin: prompt,
           timeoutSec: helloProbeTimeoutSec,
           graceSec: 5,
           onLog: async () => { },
         },
       );
-      const parsed = parseGeminiJsonl(probe.stdout);
+      const parsed = parseGeminiOutput(probe.stdout);
       const detail = summarizeProbeDetail(probe.stdout, probe.stderr, parsed.errorMessage);
       const authMeta = detectGeminiAuthRequired({
         parsed: parsed.resultEvent,

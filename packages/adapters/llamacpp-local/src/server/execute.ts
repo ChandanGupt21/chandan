@@ -248,8 +248,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   // Build messages array with conversation history
   const messages: Array<{ role: string; content: string }> = [];
 
-  // System message
-  if (instructionsPrefix) {
+  // System message (only if not resumed)
+  if (instructionsPrefix && !isResumedSession) {
     const sysContent = cfg.compressionEnabled
       ? compressInstructions(instructionsPrefix)
       : instructionsPrefix;

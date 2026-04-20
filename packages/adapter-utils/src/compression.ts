@@ -512,3 +512,22 @@ export function compressEnvironmentNotes(env: Record<string, string>): string {
 export function compressApiNotes(): string {
   return "Use curl with $PAPERCLIP_API_KEY and $PAPERCLIP_API_URL for API calls.";
 }
+
+/**
+ * Truncate large tool outputs to prevent context overflow.
+ * Keeps the head and tail of the output, with a marker indicating omission.
+ */
+export const MAX_TOOL_OUTPUT_CHARS = 8000;
+export const TAIL_CHARS = 1000;
+export const HEAD_CHARS = MAX_TOOL_OUTPUT_CHARS - TAIL_CHARS;
+
+export function truncateToolOutput(output: string, toolName: string): string {
+  if (output.length <= MAX_TOOL_OUTPUT_CHARS) return output;
+
+  const omitted = output.length - HEAD_CHARS - TAIL_CHARS;
+  return [
+    output.slice(0, HEAD_CHARS),
+    `\n... [truncated: ${omitted} chars omitted from "${toolName}" output] ...\n`,
+    output.slice(-TAIL_CHARS),
+  ].join("");
+}
